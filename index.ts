@@ -1,6 +1,6 @@
 import { MarketCache, PoolCache } from './cache';
 import { Listeners } from './listeners';
-import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
+import { Connection, KeyedAccountInfo, Keypair, PublicKey } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
 import { AccountLayout, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
@@ -49,6 +49,8 @@ import {
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
+import { PumpFunTokenTracker } from './listeners/pump-token-tracker';
+import { CreateEvent } from './src';
 
 const connection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
@@ -211,33 +213,68 @@ const runListener = async () => {
     quoteToken,
     autoSell: AUTO_SELL,
     cacheNewMarkets: CACHE_NEW_MARKETS,
+    monitorPumpFun: true,
   });
 
-  listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
-    const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
-    marketCache.save(updatedAccountInfo.accountId.toString(), marketState);
+  const pumpFunTracker = new PumpFunTokenTracker(connection);
+
+  listeners.on('pumpFunCreate', async (event: CreateEvent) => {
+    await pumpFunTracker.addToken(event);
   });
 
-  listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
-    const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
-    const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
-    const exists = await poolCache.get(poolState.baseMint.toString());
+  // listeners.on('pumpFunEvent', async (event: any) => {
+  //   logger.info(`PumpFun event detected: ${event}`);
+  //   console.log(event);
+  // });
 
-    if (!exists && poolOpenTime > runTimestamp) {
-      poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
-      await bot.buy(updatedAccountInfo.accountId, poolState);
-    }
-  });
+  // pumpFunTracker.startTracking();
 
-  listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
-    const accountData = AccountLayout.decode(updatedAccountInfo.accountInfo.data);
+  // pumpFunTracker.on('tokenAdded', (tokenData) => {
+  //   logger.info(`New pump.fun token added: ${tokenData.mintAddress}`);
+  //   logger.info(`Name: ${tokenData.name}`);
+  //   logger.info(`Symbol: ${tokenData.symbol}`);
+  //   logger.info(`Initial Price: ${tokenData.currentPrice}`);
+  //   logger.info(`Initial Holders: ${tokenData.holders}`);
+  // });
 
-    if (accountData.mint.equals(quoteToken.mint)) {
-      return;
-    }
+  // pumpFunTracker.on('tokenUpdated', (tokenData) => {
+  //   const analysis = pumpFunTracker.analyzeToken(tokenData.mintAddress);
+  //   if (analysis && analysis.score >= 80) {
+  //     logger.info(`🚀 High-potential pump.fun opportunity detected: ${tokenData.mintAddress}`);
+  //     logger.info(`Score: ${analysis.score}/100`);
+  //     logger.info(`Recommendation: ${analysis.recommendation}`);
 
-    await bot.sell(updatedAccountInfo.accountId, accountData);
-  });
+  //     logger.info('\nWhale Activity Score:', analysis.whaleActivityScore);
+  //     logger.info('Buying Momentum Score:', analysis.buyingMomentumScore);
+
+  //     logger.info('\nKey Metrics:');
+  //     logger.info(`Current Price: ${tokenData.currentPrice}`);
+  //     logger.info(`24h Volume: ${tokenData.volume24h}`);
+  //     logger.info(`Holders: ${tokenData.holders}`);
+  //     logger.info(`Whale Transactions: ${tokenData.whaleTransactions}`);
+  //     logger.info(`Whale Transaction Volume: ${tokenData.whaleTransactionVolume}`);
+  //     logger.info(`Buy Pressure: ${tokenData.buyPressure}`);
+  //     logger.info(`Sell Pressure: ${tokenData.sellPressure}`);
+  //     logger.info(`Spam Score: ${tokenData.spamScore}`);
+
+  //     logger.info('\nRecent Transactions:');
+  //     tokenData.recentTransactions
+  //       .slice(-5)
+  //       .forEach((tx: { type: any; amount: any; timestamp: string | number | Date }, index: number) => {
+  //         logger.info(
+  //           `${index + 1}. Type: ${tx.type}, Amount: ${tx.amount}, Time: ${new Date(tx.timestamp).toISOString()}`,
+  //         );
+  //       });
+
+  //     if (analysis.score >= 90) {
+  //       logger.info('\nInitiating aggressive buying strategy');
+  //       // Implement aggressive buying logic here
+  //     } else {
+  //       logger.info('\nInitiating moderate buying strategy');
+  //       // Implement moderate buying logic here
+  //     }
+  //   }
+  // });
 
   printDetails(wallet, quoteToken, bot);
 };
